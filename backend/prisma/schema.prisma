@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  GITHUB
+}
+
+model User {
+  id              String   @id @default(uuid())
+  name            String
+  email           String   @unique
+  passwordHash    String?
+  avatar          String?
+  isEmailVerified Boolean  @default(false)
+  role            Role     @default(USER)
+  provider        AuthProvider @default(LOCAL)
+  providerId      String?
+
+  // -------- Brute-force protection ----------
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
+  // ---- Two-factor authentication (TOTP) ----
+  twoFactorEnabled      Boolean  @default(false)
+  twoFactorSecret       String?
+  twoFactorBackupCodes  String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refreshTokens        RefreshToken[]
+  verificationTokens   VerificationToken[]
+  passwordResetTokens  PasswordResetToken[]
+  linkedAccounts       LinkedAccount[]
+  loginActivity        LoginActivity[]
+
+  @@index([email])
+}
+
+/// Audit trail of every login attempt (successful or not), surfaced to the
+/// user as "recent account activity" and useful for detecting suspicious
+/// access patterns (new IP/device, repeated failures, etc.).
+model LoginActivity {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  success   Boolean
+  reason    String? // e.g. "bad_password", "account_locked", "2fa_failed"
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// One row per external identity (Google, GitHub, ...) linked to a User.
+/// A single User can have many LinkedAccounts, which is what enables
+/// "sign in with email OR Google OR GitHub, all landing on the same account".
+model LinkedAccount {
+  id         String       @id @default(uuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   AuthProvider
+  providerId String
+  email      String?
+  avatar     String?
+  createdAt  DateTime     @default(now())
+
+  // The same provider identity can only ever belong to one user...
+  @@unique([provider, providerId])
+  // ...and a user can only link one account per provider.
+  @@unique([userId, provider])
+  @@index([userId])
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hashedToken String
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+  deviceName  String?
+  ipAddress   String?
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
